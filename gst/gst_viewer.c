@@ -59,6 +59,14 @@ struct gst_src {
 
 struct gst_src src;
 
+/**
+ * @brief A callback function that is called when the GStreamer main loop publishes a message to GstBus (usually errors)
+ * 
+ * @param bus 
+ * @param message 
+ * @param data 
+ * @return gboolean 
+ */
 static gboolean
 gst_bus_cb(GstBus *bus, GstMessage *message, gpointer data)
 {
@@ -69,6 +77,9 @@ gst_bus_cb(GstBus *bus, GstMessage *message, gpointer data)
 	case GST_MESSAGE_ERROR:
 		gst_message_parse_error(message, &err, &dbg);
 		g_print("Error: %s\n", err->message);
+		// Begin JCode: Below line outputs debug info if available
+		g_print("Debug: %s\n", (dbg) ? dbg : "none");
+		// End JCode
 		g_error_free(err);
 		g_free(dbg);
 		g_main_loop_quit(src.loop);
@@ -81,15 +92,31 @@ gst_bus_cb(GstBus *bus, GstMessage *message, gpointer data)
 	return TRUE;
 }
 
-
+/**
+ * @brief This function when called completes the GStreamer pipeline using the char *pipeline string to tack onto the end of the appsrc processing needed in both gst_viewer & gst_loopback
+ * 
+ * @param argc 
+ * @param argv 
+ * @param pipeline 
+ * @return int 
+ */
 int
 gst_src_init(int *argc, char ***argv, char *pipeline)
 {
 	GstCaps *caps;
 	GstBus *bus;
 	char pipeline_str[MAX_PIPELINE_LEN];
-
-	snprintf(pipeline_str, MAX_PIPELINE_LEN, "appsrc name=ap ! queue ! h264parse ! queue ! %s ", pipeline);
+	/* Begin JCode:
+	 * appsrc is the element used to import a video stream from a non-default source such as libuvc
+	 *		in this case
+	 *
+	 * The h264parse element here is used to make the video stream caps (capabilities) compatible 
+	 * 		with the pads of the following elements in the pipeline. Without h264parse, most 
+	 * 		elements (except fakesink and other non-picky elements like queue) will throw the 
+	 * 		"Internal Data Stream" error when directly following the appsrc.
+	*/
+	snprintf(pipeline_str, MAX_PIPELINE_LEN, "appsrc name=ap ! queue  ! h264parse ! %s ", pipeline);
+	// End JCode
 
 	gst_init(argc, argv);
 	src.timer = g_timer_new();
@@ -115,6 +142,12 @@ gst_src_init(int *argc, char ***argv, char *pipeline)
 	return TRUE;
 }
 
+/**
+ * @brief Awaits a keypress (any, but more specifically, a LF/CRLF will trigger this) which then closes the GStreamer blocking loop and ends the program
+ * 
+ * @param arg 
+ * @return void* 
+ */
 void *
 keywait(void *arg)
 {
@@ -128,6 +161,12 @@ keywait(void *arg)
 
 }
 
+/**
+ * @brief A callback that pushes UVC data to the GStreamer pipeline through the appsrc element one frame at a time when recieved
+ * 
+ * @param frame 
+ * @param ptr 
+ */
 void
 cb(uvc_frame_t *frame, void *ptr)
 {
@@ -183,13 +222,18 @@ main(int argc, char **argv)
 		cmd_name = argv[0];
 	else
 		cmd_name++;
-
+	/* Begin JCode:
+	 * gst_loopback code will take the parsed h264 video stream from appsrc, confirm the caps, 
+	 *		prepare the RTP payload and send it to the host at a specified port via UDP
+	 *
+	 * gst_viewer will simply queue the parsed h264 video stream as a buffer before decoding and
+	 * 		outputting to the display using autovideosink to determine the best method to do so
+	 */
 	if (strcmp(cmd_name, "gst_loopback") == 0)
-		pipe_proc = "decodebin ! autovideoconvert ! "
-			"video/x-raw,format=I420 ! identity drop-allocation=true !"
-			"v4l2sink device=/dev/video1 sync=false";
+		pipe_proc = " video/x-h264,width=3840,height=1920,framerate=30000/1001 ! rtph264pay ! udpsink host=192.168.43.111 port=5000";
 	else
-		pipe_proc = " decodebin ! autovideosink sync=false";
+		pipe_proc = " queue ! decodebin ! autovideosink sync=false";
+	// End JCode
 
 	if (!gst_src_init(&argc, &argv, pipe_proc))
 		return -1;
@@ -231,12 +275,14 @@ main(int argc, char **argv)
 	src.framecount = 0;
 	res = thetauvc_find_device(ctx, &dev, 0);
 	if (res != UVC_SUCCESS) {
+		// Debug Note: If you recieve this message, check that the THETA is turned on (Can see the LIVE indicator lit)
 		fprintf(stderr, "THETA not found\n");
 		goto exit;
 	}
 
 	res = uvc_open(dev, &devh);
 	if (res != UVC_SUCCESS) {
+		// Debug Note: Check that you are using libuvc-theta and not libuvc
 		fprintf(stderr, "Can't open THETA\n");
 		goto exit;
 	}
