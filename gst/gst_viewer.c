@@ -37,6 +37,7 @@
 
 #include <gst/gst.h>
 #include <gst/app/gstappsrc.h>
+#include <gst/rtsp-server/rtsp-server.h>
 
 
 #include "libuvc/libuvc.h"
@@ -115,7 +116,7 @@ gst_src_init(int *argc, char ***argv, char *pipeline)
 	 * 		elements (except fakesink and other non-picky elements like queue) will throw the 
 	 * 		"Internal Data Stream" error when directly following the appsrc.
 	*/
-	snprintf(pipeline_str, MAX_PIPELINE_LEN, "appsrc name=ap ! queue  ! h264parse ! %s ", pipeline);
+	snprintf(pipeline_str, MAX_PIPELINE_LEN, "appsrc name=ap ! h264parse ! %s ", pipeline);
 	// End JCode
 
 	gst_init(argc, argv);
@@ -217,6 +218,10 @@ main(int argc, char **argv)
 	char *pipe_proc;
 	char *cmd_name;
 
+	/*
+	 * This part of the code is just figuring out what the name of the executable file is and
+	 * providing a corresponding ending to the GST pipeline as the string pipe_proc
+	*/
 	cmd_name = rindex(argv[0], '/');
 	if (cmd_name == NULL)
 		cmd_name = argv[0];
@@ -229,61 +234,40 @@ main(int argc, char **argv)
 	 * gst_viewer will simply queue the parsed h264 video stream as a buffer before decoding and
 	 * 		outputting to the display using autovideosink to determine the best method to do so
 	 */
-	if (strcmp(cmd_name, "gst_loopback") == 0)
-		pipe_proc = " video/x-h264,width=3840,height=1920,framerate=30000/1001 ! rtph264pay ! udpsink host=192.168.43.111 port=5000";
-	else
+	if (strcmp(cmd_name, "gst_loopback") == 0) {
+		//pipe_proc = " video/x-h264,width=3840,height=1920,framerate=30000/1001 ! rtph264pay ! udpsink host=192.168.43.111 port=5000";
+		pipe_proc = " video/x-h264,width=3840,height=1920,framerate=30000/1001 ! rtspclientsink location=rtsp://192.168.43.90:8554/stream";
+	}
+	else {
 		pipe_proc = " queue ! decodebin ! autovideosink sync=false";
+	}
 	// End JCode
 
-	if (!gst_src_init(&argc, &argv, pipe_proc))
+	if (!gst_src_init(&argc, &argv, pipe_proc)){
 		return -1;
+	}
 
 	res = uvc_init(&ctx, NULL);
 	if (res != UVC_SUCCESS) {
-		uvc_perror(res, "uvc_init");
+		uvc_perror(res, "Error on uvc_init call");
 		return res;
-	}
-
-	if (argc > 1 && strcmp("-l", argv[1]) == 0) {
-		res = thetauvc_find_devices(ctx, &devlist);
-		if (res != UVC_SUCCESS) {
-			uvc_perror(res,"");
-			uvc_exit(ctx);
-			return res;
-		}
-
-		idx = 0;
-		printf("No : %-18s : %-10s\n", "Product", "Serial");
-		while (devlist[idx] != NULL) {
-			uvc_device_descriptor_t *desc;
-
-			if (uvc_get_device_descriptor(devlist[idx], &desc) != UVC_SUCCESS)
-				continue;
-
-			printf("%2d : %-18s : %-10s\n", idx, desc->product,
-				desc->serialNumber);
-
-			uvc_free_device_descriptor(desc);
-			idx++;
-		}
-
-		uvc_free_device_list(devlist, 1);
-		uvc_exit(ctx);
-		exit(0);
 	}
 
 	src.framecount = 0;
 	res = thetauvc_find_device(ctx, &dev, 0);
 	if (res != UVC_SUCCESS) {
-		// Debug Note: If you recieve this message, check that the THETA is turned on (Can see the LIVE indicator lit)
-		fprintf(stderr, "THETA not found\n");
+		fprintf(stderr, "ERROR: THETA not found\n");
+		fprintf(stderr, "Check that the THETA is connected, powered on, and on LIVE mode\n");
 		goto exit;
 	}
 
 	res = uvc_open(dev, &devh);
 	if (res != UVC_SUCCESS) {
-		// Debug Note: Check that you are using libuvc-theta and not libuvc
-		fprintf(stderr, "Can't open THETA\n");
+		fprintf(stderr, "ERROR: Can't open THETA\n");
+		fprintf(stderr, "Check that libuvc-theta is being used rather than standard libuvc\n");
+		// DEBUG NOTE: libuvc-theta by ricohapi is different from libuvc but the README.md used
+		//	by the libuvc-theta repo is directly copied from libuvc and so even the git clone url
+		//	is funnily enough, incorrect for use with the THETA V
 		goto exit;
 	}
 
