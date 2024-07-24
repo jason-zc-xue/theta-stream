@@ -153,6 +153,7 @@ int gst_src_init(int* argc, char*** argv, char* pipeline) {
  * this) which then closes the GStreamer blocking loop and ends the program.
  *
  * @param arg Value of the pressed key
+ * @return void* ???
  */
 void* keywait(void* arg) {
     struct gst_src* s;
@@ -208,6 +209,7 @@ void cb(uvc_frame_t* frame, void* ptr) {
  */
 void print_help() {
     std::cout
+        << "\n"
         << "Usage: gst_viewer -p <PROFILE> [OPTIONS]\n"
         << "Options:\n"
         << "  -h, --help          Show this help message.\n"
@@ -238,7 +240,7 @@ int main(int argc, char** argv) {
     std::string port;         // default=5000, but only set based on `stream`
     std::string stream_opts;  // only set based on `profile`
 
-    std::string profile;          // user input
+    bool profile_given = false;   // derived from
     std::string custom_pipeline;  // user input (overrides all others)
 
     for (int i = 1; i < argc; ++i) {
@@ -247,7 +249,6 @@ int main(int argc, char** argv) {
         std::string val;
         if (i + 1 < argc) {
             val = (argv[++i]);
-            i += 1;  // double increment to skip over val next iteration
         }
 
         if (arg == "-h" || arg == "--help") {
@@ -258,8 +259,8 @@ int main(int argc, char** argv) {
             addr = val;
 
         } else if ((arg == "-s" || arg == "--stream")) {
-            std::string addr_type;  // not used by autovideosink
             if (val == "auto") {
+                // Note: addr_type is not used by autovideosink
                 val += "video";  // full name is "autovideo"
             } else if (val == "rtsp") {
                 needs_addr = true;
@@ -273,7 +274,8 @@ int main(int argc, char** argv) {
                 needs_addr = true;
                 addr_type = "device=";
             } else {
-                std::cerr << "Unknown streaming protocol: " << val << "\n";
+                std::cerr << "[ERROR] Unknown streaming protocol: " << val
+                          << "\n";
                 print_help();
                 return 1;
             }
@@ -303,63 +305,84 @@ int main(int argc, char** argv) {
                 port = "5000";
                 stream_opts = "";
             } else {
-                std::cerr << "Unknown profile: " << val << "\n";
+                std::cerr << "[ERROR] Unknown profile: " << val << "\n";
                 print_help();
                 return 1;
             }
+            profile_given = true;
+            break;  // ignore any other options and exit loop
 
         } else if (arg == "-P" || arg == "--pipeline") {
             custom_pipeline = val;
 
         } else {
-            std::cerr << "Unknown option: " << arg << "\n";
+            std::cerr << "[ERROR] Unknown option: " << arg << "\n";
             print_help();
             return 1;
         }
     }
 
-    // Check if mutually inclusive variables were provided
-    if (needs_addr && !addr.empty()) {
-        std::cerr << "Streamer " << stream << "requires an address!\n";
-        print_help();
-        return 1;
-    }
-
-    // Set defaults
-    if (addr.empty()) {
-        addr = "192.168.43.111";
-    }
-    if (stream.empty()) {
-        stream = "udpsink host=";
-    }
-
-    // Form the pipeline string
     std::string pipeline;
-    if (custom_pipeline.empty()) {
+    if (!custom_pipeline.empty()) {
+        // Skip further input processing if a custom pipeline was provided
+        pipeline = custom_pipeline;
+    } else {
+        // Check mutually-inclusive variables
+        if (!profile_given && stream.empty()) {
+            std::cerr << "[ERROR] Missing required args!\n"
+                      << "Please specify either a profile or a streaming "
+                         "protocol + address\n";
+            print_help();
+            return 1;
+        }
+        if (needs_addr && addr.empty()) {
+            std::cerr << "[ERROR] Streamer \"" << stream
+                      << "\" requires an address!\n";
+            print_help();
+            return 1;
+        }
+
+        // Set defaults
+        if (stream.empty()) {
+            std::string val("udp");
+            std::cout
+                << "[WARN] Streaming protocol not specified; defaulting to "
+                << stream << "\n";
+            stream = val + "sink";
+        }
+        if (addr.empty() && stream != "autovideosink") {
+            addr_type = "host=";
+            addr = "192.168.43.111";
+            port_type = "port=";
+            port = "5000";  // default
+            std::cout << "[WARN] Sink address not specified; defaulting to "
+                      << addr << ":" << port << "\n";
+        }
+
+        // Form the pipeline string
         std::ostringstream oss;
         oss << " ";
-        // Preamble
-        if (pre.empty()) {
+        // - Preamble
+        if (!pre.empty()) {
             oss << pre << " ! ";
         }
-        // Streaming
+        // - Streaming
         oss << stream;
-        if (addr.empty()) {
+        if (!addr.empty()) {
             oss << " " << addr_type << addr;
         }
-        if (port.empty()) {
+        if (!port.empty()) {
             oss << " " << port_type << port;
         }
-        if (stream_opts.empty()) {
+        if (!stream_opts.empty()) {
             oss << " " << stream_opts;
         }
         pipeline = oss.str();
-    } else {
-        pipeline = custom_pipeline;
     }
 
     // FOR DEBUGGING PURPOSES ONLY
-    std::cout << "[DEBUG] Using the following pipeline:\n" << pipeline << "\n";
+    std::cout << "[DEBUG] Using the following pipeline ending:\n\"" << pipeline
+              << "\"\n";
     /* ----- END JCODE ----- */
 
     uvc_context_t* ctx;
@@ -376,7 +399,7 @@ int main(int argc, char** argv) {
     int idx;
     /* ----- BEGIN JCODE ----- */
     // Only placing this here so as to not break up the variable initialization
-    // of the original program (see above)
+    // of the original program.
     char* pipe_proc = new char[pipeline.size() + 1];
     strcpy(pipe_proc, pipeline.c_str());
     /* ----- END JCODE ----- */
@@ -395,53 +418,28 @@ int main(int argc, char** argv) {
 
     res = uvc_init(&ctx, NULL);
     if (res != UVC_SUCCESS) {
-        uvc_perror(res, "uvc_init");
+        uvc_perror(res, "[ERROR] The uvc_init call failed!");
         return res;
-    }
-
-    if (argc > 1 && strcmp("-l", argv[1]) == 0) {
-        res = thetauvc_find_devices(ctx, &devlist);
-        if (res != UVC_SUCCESS) {
-            uvc_perror(res, "");
-            uvc_exit(ctx);
-            return res;
-        }
-
-        idx = 0;
-        printf("No : %-18s : %-10s\n", "Product", "Serial");
-        while (devlist[idx] != NULL) {
-            uvc_device_descriptor_t* desc;
-
-            if (uvc_get_device_descriptor(devlist[idx], &desc) != UVC_SUCCESS) {
-                continue;
-            }
-
-            printf("%2d : %-18s : %-10s\n", idx, desc->product,
-                   desc->serialNumber);
-
-            uvc_free_device_descriptor(desc);
-            idx++;
-        }
-
-        uvc_free_device_list(devlist, 1);
-        uvc_exit(ctx);
-        exit(0);
     }
 
     src.framecount = 0;
     res = thetauvc_find_device(ctx, &dev, 0);
     if (res != UVC_SUCCESS) {
-        // Debug Note: If you recieve this message, check that the THETA is
-        // turned on (Can see the LIVE indicator lit)
-        fprintf(stderr, "THETA not found\n");
-        uvc_exit(ctx);
+        std::cerr << "[ERROR] THETA not found!\n"
+                  << "Check whether the THETA is connected, powered on, and on "
+                     "LIVE mode.\n";
         return res;
     }
 
     res = uvc_open(dev, &devh);
     if (res != UVC_SUCCESS) {
-        // Debug Note: Check that you are using libuvc-theta and not libuvc
-        fprintf(stderr, "Can't open THETA\n");
+        // NOTE: libuvc-theta by ricohapi is different from libuvc, but the
+        // README.md in the libuvc-theta repo is -directly- copied from libuvc.
+        // So, funnily enough, even the git clone url is incorrect for use with
+        // the THETA V camera.
+        std::cerr << "[ERROR] Can't open THETA!\n"
+                  << "Ensure libuvc-theta is being used rather than standard "
+                     "libuvc.\n";
         uvc_exit(ctx);
         return res;
     }
