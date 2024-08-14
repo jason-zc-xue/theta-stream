@@ -297,12 +297,10 @@ int main(int argc, char** argv) {
             } else if (val == "streamer") {
                 // TODO(Jason): explain
                 pre = "video/x-h264,width=3840,height=1920,framerate=30000/"
-                      "1001 ! rtph264pay";
+                      "1001 ! rtspclientsink";
                 stream = "udpsink";
-                addr_type = "host=";
-                addr = "192.168.43.111";
-                port_type = "port=";
-                port = "5000";
+                addr_type = "location=";
+                addr = "rtsp://192.168.43.90:8554/stream";
                 stream_opts = "";
             } else {
                 std::cerr << "[ERROR] Unknown profile: " << val << "\n";
