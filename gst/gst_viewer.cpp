@@ -283,19 +283,19 @@ int main(int argc, char** argv) {
 
         } else if ((arg == "-p" || arg == "--profile")) {
             if (val == "loopback") {
-                // TODO(Jason): explain
+                // Used to sink the parsed H264 stream into a v4l2loopback virtual video device
                 pre = "queue";
                 stream = "v4l2sink";
                 addr_type = "device=";
                 addr = "/dev/video1";
                 stream_opts = "sync=false";
             } else if (val == "viewer") {
-                // TODO(Jason): explain
+                // Used to test basic functionality
                 pre = "queue ! decodebin";
                 stream = "autovideosink";
                 stream_opts = "sync=false";
             } else if (val == "streamer") {
-                // TODO(Jason): explain
+                // Creates an RTSP server
                 pre = "video/x-h264,width=3840,height=1920,framerate=30000/"
                       "1001 ! rtspclientsink";
                 stream = "udpsink";
